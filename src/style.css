@@ -120,13 +120,15 @@ html, body {
 
 #controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 8px 14px;
   background: rgba(0, 0, 0, 0.35);
   border-radius: 10px;
   padding: 6px 10px;
   pointer-events: auto;
   align-self: flex-start;
+  max-width: 100%;
 }
 
 #controls label {
@@ -155,6 +157,36 @@ html, body {
   background: #ffb703;
   color: #1a1300;
   border-color: #ffb703;
+}
+
+#debug-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: transparent;
+  color: #fff;
+}
+
+#debug-btn.active {
+  background: #47bfff;
+  color: #001a26;
+  border-color: #47bfff;
+}
+
+#debug-panel {
+  pointer-events: none;
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 8px;
+  color: #9be8ff;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  align-self: flex-start;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 
 #info-panel {

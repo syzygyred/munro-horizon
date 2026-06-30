@@ -14,6 +14,7 @@ export class SensorHub {
       headingSource: null, // 'gps' | 'compass' | 'mock'
       speed: null,
       error: null,
+      debug: null,
     };
     this._listeners = new Set();
     this._geoWatchId = null;
@@ -97,16 +98,48 @@ export class SensorHub {
     // webkitCompassHeading (and alpha) report the bearing of the device's
     // physical top edge — fixed to the hardware, not to whichever edge is
     // currently "up" on screen. Rotate into landscape and that stops being
-    // the direction the screen (and driver) is actually facing. Correcting
-    // by window.orientation (iOS's screen-rotation angle) fixes this; see
-    // chat history for the geometric derivation of the sign.
-    const screenAngle = typeof window.orientation === 'number' ? window.orientation : 0;
+    // the direction the screen (and driver) is actually facing, unless
+    // corrected for the current screen rotation.
+    //
+    // window.orientation is long-deprecated and its real-world reliability
+    // on current iOS is unconfirmed, so this prefers the modern Screen
+    // Orientation API (screen.orientation.angle, iOS 16.4+) when available,
+    // falling back to window.orientation. ALL raw values are stamped into
+    // state.debug — until the correct sign is confirmed against a real
+    // device, this is the ground truth for diagnosing it, not the
+    // corrected `heading` field.
+    const winOrientation = typeof window.orientation === 'number' ? window.orientation : null;
+    const screenOrientation = typeof screen !== 'undefined' ? screen.orientation : null;
+
+    // screen.orientation.angle and window.orientation use OPPOSITE sign
+    // conventions for the same physical rotation (well-documented cross-API
+    // gotcha) — normalise both onto the screen.orientation.angle convention
+    // (angle = -window.orientation, mod 360) so one formula below applies
+    // uniformly regardless of which API actually responded.
+    let screenAngle = 0;
+    if (screenOrientation && typeof screenOrientation.angle === 'number') {
+      screenAngle = screenOrientation.angle;
+    } else if (winOrientation != null) {
+      screenAngle = (360 - winOrientation) % 360;
+    }
+
+    const rawCompass = typeof e.webkitCompassHeading === 'number' ? e.webkitCompassHeading : null;
+    const rawAlpha = e.alpha ?? null;
+
+    this.state.debug = {
+      webkitCompassHeading: rawCompass,
+      alpha: rawAlpha,
+      windowOrientation: winOrientation,
+      screenOrientationAngle: screenOrientation?.angle ?? null,
+      screenOrientationType: screenOrientation?.type ?? null,
+      screenAngleUsed: screenAngle,
+    };
 
     let heading = null;
-    if (typeof e.webkitCompassHeading === 'number') {
-      heading = (e.webkitCompassHeading - screenAngle + 360) % 360;
-    } else if (e.alpha != null) {
-      heading = (360 - e.alpha - screenAngle + 360) % 360; // alpha is CCW from the device's initial orientation
+    if (rawCompass != null) {
+      heading = (rawCompass + screenAngle) % 360;
+    } else if (rawAlpha != null) {
+      heading = (360 - rawAlpha + screenAngle) % 360; // alpha is CCW from the device's initial orientation
     }
     if (heading == null) return;
 

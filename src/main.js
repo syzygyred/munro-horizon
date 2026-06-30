@@ -52,12 +52,15 @@ const els = {
   infoBearing: document.getElementById('info-bearing'),
   infoNumber: document.getElementById('info-number'),
   terrainStatus: document.getElementById('terrain-status'),
+  debugBtn: document.getElementById('debug-btn'),
+  debugPanel: document.getElementById('debug-panel'),
 };
 
 let munros = [];
 let lastState = null;
 let frozen = false;
 let terrainReady = false;
+let debugOn = false;
 
 const hub = new SensorHub();
 const view = new HorizonView(els.canvas, {
@@ -177,6 +180,21 @@ function updateStatusBar(state) {
     state.heading != null ? `${Math.round(state.heading)}° (${state.headingSource ?? '–'})` : 'no heading';
   els.gpsReadout.textContent =
     state.lat != null ? `${state.lat.toFixed(4)}, ${state.lon.toFixed(4)}` : state.error ?? 'no fix';
+
+  if (debugOn) {
+    const d = state.debug;
+    els.debugPanel.textContent = d
+      ? [
+          `webkitCompassHeading: ${d.webkitCompassHeading ?? '–'}`,
+          `alpha:                ${d.alpha ?? '–'}`,
+          `window.orientation:   ${d.windowOrientation ?? '–'}`,
+          `screen.orient.angle:  ${d.screenOrientationAngle ?? '–'}`,
+          `screen.orient.type:   ${d.screenOrientationType ?? '–'}`,
+          `correction applied:   ${d.screenAngleUsed ?? '–'}`,
+          `=> computed heading:  ${state.heading != null ? Math.round(state.heading) : '–'}°`,
+        ].join('\n')
+      : 'no orientation events received yet';
+  }
 }
 
 function showInfo(peak) {
@@ -203,6 +221,13 @@ els.freezeBtn.addEventListener('click', () => {
   els.freezeBtn.textContent = frozen ? 'Unfreeze' : 'Freeze';
   els.freezeBtn.classList.toggle('active', frozen);
   if (!frozen) draw(lastState);
+});
+
+els.debugBtn.addEventListener('click', () => {
+  debugOn = !debugOn;
+  els.debugBtn.classList.toggle('active', debugOn);
+  els.debugPanel.hidden = !debugOn;
+  if (debugOn && lastState) updateStatusBar(lastState);
 });
 
 function enterRunningState() {
