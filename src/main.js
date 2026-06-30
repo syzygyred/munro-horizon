@@ -5,6 +5,12 @@ import { distanceMetres, bearing, angularHeightDeg, relativeBearing } from './ge
 import { latLonToGrid } from './osgb.js';
 import { TerrainStore, raySkyline, isVisible } from './terrain.js';
 
+// FOV (the "lens"): low = telephoto/zoomed-in, high = wide-angle. Pinch and
+// the Zoom slider both drive this. 10° gives roughly a 6x reach vs the ~60°
+// of normal vision; 160° is an ultra-wide panorama.
+const MIN_FOV = 10;
+const MAX_FOV = 160;
+
 // Fallback eye-level when the device gives no altitude (common on iOS Safari
 // without precise/3D location): a typical Highland road elevation.
 const DEFAULT_OBSERVER_HEIGHT_M = 250;
@@ -34,6 +40,7 @@ const els = {
   headingReadout: document.getElementById('heading-readout'),
   gpsReadout: document.getElementById('gps-readout'),
   fovRange: document.getElementById('fov-range'),
+  fovValue: document.getElementById('fov-value'),
   rangeRange: document.getElementById('range-range'),
   rangeValue: document.getElementById('range-value'),
   freezeBtn: document.getElementById('freeze-btn'),
@@ -53,8 +60,34 @@ let frozen = false;
 let terrainReady = false;
 
 const hub = new SensorHub();
-const view = new HorizonView(els.canvas, { onSelect: showInfo });
+const view = new HorizonView(els.canvas, {
+  onSelect: showInfo,
+  minFov: MIN_FOV,
+  maxFov: MAX_FOV,
+  onFovChange: applyFov,
+});
 const terrain = new TerrainStore();
+
+// rAF-coalesced redraw for interactive changes (pinch, slider) — keeps the
+// live zoom smooth at the display's refresh rate without queuing a full
+// ray-cast per touch event. Distinct from the slower sensor throttle, which
+// trades latency for battery while just driving along.
+let rafPending = false;
+function requestRedraw() {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => {
+    rafPending = false;
+    draw(lastState);
+  });
+}
+
+function applyFov(fov) {
+  const clamped = Math.max(MIN_FOV, Math.min(MAX_FOV, Math.round(fov)));
+  els.fovRange.value = String(clamped);
+  els.fovValue.textContent = `${clamped}°`;
+  requestRedraw();
+}
 
 async function loadMunros() {
   const res = await fetch(`${import.meta.env.BASE_URL}data/munros.json`);
@@ -159,7 +192,7 @@ els.infoClose.addEventListener('click', () => {
   els.infoPanel.hidden = true;
 });
 
-els.fovRange.addEventListener('input', () => draw(lastState));
+els.fovRange.addEventListener('input', () => applyFov(Number(els.fovRange.value)));
 els.rangeRange.addEventListener('input', () => {
   els.rangeValue.textContent = `${els.rangeRange.value}km`;
   draw(lastState);

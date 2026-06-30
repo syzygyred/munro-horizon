@@ -2,23 +2,33 @@
 // angular elevation above the horizon ("size = angular height" from the
 // schematic-MVP design — no real terrain silhouette yet, that's Phase 2).
 
-// Fraction of canvas height used per degree of elevation, rather than a
-// fixed pixel constant — keeps glyphs from overrunning the HUD when the
-// viewport is short (phone in landscape, mounted in a car).
-const APEX_PX_PER_DEG_FRACTION = 0.032;
-const APEX_PX_PER_DEG_MIN = 10;
-const APEX_PX_PER_DEG_MAX = 30;
+// Vertical magnification relative to horizontal, held CONSTANT across zoom
+// so the view reads as one consistent lens. Horizontal px/degree is set by
+// the FOV (see render()); tying vertical to it means pinching to zoom in
+// magnifies hill height and width together, like a real telephoto lens
+// rather than just stretching sideways. >1 because true 1:1 makes distant
+// hills (only a couple of degrees tall) too flat to recognise.
+const VERTICAL_EXAGGERATION = 1.3;
+
+// Keep labels from flying off the top of the canvas when zoomed in tight
+// (a near hill at 10° FOV can tower well above the visible sky area).
+const LABEL_TOP_MARGIN_PX = 46;
+
 const MIN_HIT_RADIUS_PX = 18;
 
 export class HorizonView {
-  constructor(canvas, { fovDeg = 90, maxDistanceM = 50000, onSelect } = {}) {
+  constructor(canvas, { fovDeg = 90, maxDistanceM = 50000, minFov = 10, maxFov = 160, onSelect, onFovChange } = {}) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.fovDeg = fovDeg;
     this.maxDistanceM = maxDistanceM;
+    this.minFov = minFov;
+    this.maxFov = maxFov;
     this.onSelect = onSelect;
+    this.onFovChange = onFovChange;
     this._hits = [];
     this._lastRender = null;
+    this._pinch = null;
 
     this._resize();
     window.addEventListener('resize', () => {
@@ -31,14 +41,47 @@ export class HorizonView {
       }
     });
     canvas.addEventListener('click', (e) => this._handlePoint(e.clientX, e.clientY));
-    canvas.addEventListener('touchend', (e) => {
-      const t = e.changedTouches[0];
-      if (t) this._handlePoint(t.clientX, t.clientY);
-    });
+    canvas.addEventListener('touchstart', (e) => this._onTouchStart(e), { passive: false });
+    canvas.addEventListener('touchmove', (e) => this._onTouchMove(e), { passive: false });
+    canvas.addEventListener('touchend', (e) => this._onTouchEnd(e));
+    canvas.addEventListener('touchcancel', (e) => this._onTouchEnd(e));
   }
 
   setFov(deg) {
     this.fovDeg = deg;
+  }
+
+  _touchDist(a, b) {
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+
+  _onTouchStart(e) {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      this._pinch = { startDist: this._touchDist(e.touches[0], e.touches[1]), startFov: this.fovDeg };
+    }
+  }
+
+  // Pinch maps to FOV — spreading fingers (distance grows) narrows the FOV,
+  // i.e. zooms in like a longer lens. Anchored to the gesture's start so the
+  // mapping doesn't drift over a continuous pinch.
+  _onTouchMove(e) {
+    if (!this._pinch || e.touches.length < 2) return;
+    e.preventDefault();
+    const dist = this._touchDist(e.touches[0], e.touches[1]);
+    if (dist <= 0) return;
+    const newFov = this._pinch.startFov * (this._pinch.startDist / dist);
+    const clamped = Math.max(this.minFov, Math.min(this.maxFov, newFov));
+    this.onFovChange?.(clamped);
+  }
+
+  _onTouchEnd(e) {
+    if (this._pinch) {
+      if (e.touches.length < 2) this._pinch = null;
+      return; // lifting out of a pinch must not register as a tap-to-identify
+    }
+    const t = e.changedTouches[0];
+    if (t) this._handlePoint(t.clientX, t.clientY);
   }
 
   setMaxDistance(m) {
@@ -89,10 +132,9 @@ export class HorizonView {
     this._drawCompassTicks(ctx, width, baseline, headingDeg);
 
     const pixelsPerDegree = width / this.fovDeg;
-    const apexPxPerDegElevation = Math.min(
-      APEX_PX_PER_DEG_MAX,
-      Math.max(APEX_PX_PER_DEG_MIN, height * APEX_PX_PER_DEG_FRACTION),
-    );
+    // Vertical magnification tracks horizontal, so zooming (changing FOV)
+    // scales both axes together — true optical zoom, not a sideways stretch.
+    const apexPxPerDegElevation = pixelsPerDegree * VERTICAL_EXAGGERATION;
 
     const visible = peaksWithGeo
       .filter((p) => Math.abs(p.relBearing) <= this.fovDeg / 2 + 1)
@@ -162,11 +204,15 @@ export class HorizonView {
       ctx.font = '11px -apple-system, sans-serif';
       const textWidth = Math.max(ctx.measureText(text).width, ctx.measureText(subtext).width);
 
+      // When zoomed in, a peak's apex can sit above the visible area; pin the
+      // label just inside the top so it stays readable rather than vanishing.
+      const labelY = Math.max(g.apexY, LABEL_TOP_MARGIN_PX);
+
       const rect = {
         left: g.x - textWidth / 2 - 4,
         right: g.x + textWidth / 2 + 4,
-        top: g.apexY - 32,
-        bottom: g.apexY - 4,
+        top: labelY - 32,
+        bottom: labelY - 4,
       };
       const overlaps = placed.some(
         (r) => rect.left < r.right && rect.right > r.left && rect.top < r.bottom && rect.bottom > r.top,
@@ -177,10 +223,10 @@ export class HorizonView {
       ctx.textAlign = 'center';
       ctx.fillStyle = `rgba(255,255,255,${Math.min(1, g.opacity + 0.3)})`;
       ctx.font = '11px -apple-system, sans-serif';
-      ctx.fillText(text, g.x, g.apexY - 6);
+      ctx.fillText(text, g.x, labelY - 6);
       ctx.fillStyle = `rgba(220,220,220,${g.opacity})`;
       ctx.font = '10px -apple-system, sans-serif';
-      ctx.fillText(subtext, g.x, g.apexY - 18);
+      ctx.fillText(subtext, g.x, labelY - 18);
     }
   }
 
