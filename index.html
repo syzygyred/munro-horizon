@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#0d1b2a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Munro Horizon</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="horizon"></canvas>
+
+      <div id="start-screen">
+        <h1>Munro Horizon</h1>
+        <p>Points at the hills around you and names the Munros on the skyline.</p>
+        <button id="start-btn" type="button">Start</button>
+        <button id="demo-btn" type="button">Try demo (no GPS)</button>
+        <p id="start-error" class="error" hidden></p>
+      </div>
+
+      <div id="hud" hidden>
+        <div id="status-bar">
+          <span id="heading-readout">–</span>
+          <span id="gps-readout">–</span>
+        </div>
+        <div id="controls">
+          <label>FOV
+            <input id="fov-range" type="range" min="40" max="160" value="90" />
+          </label>
+          <label>Range
+            <input id="range-range" type="range" min="10" max="80" value="50" />
+            <span id="range-value">50km</span>
+          </label>
+          <button id="freeze-btn" type="button">Freeze</button>
+        </div>
+      </div>
+
+      <div id="info-panel" hidden>
+        <button id="info-close" type="button" aria-label="Close">✕</button>
+        <h2 id="info-name"></h2>
+        <dl>
+          <dt>Height</dt><dd id="info-height"></dd>
+          <dt>Distance</dt><dd id="info-distance"></dd>
+          <dt>Bearing</dt><dd id="info-bearing"></dd>
+          <dt>Munro No.</dt><dd id="info-number"></dd>
+        </dl>
+      </div>
+
+      <p id="attribution">Hill data: Database of British and Irish Hills (DoBIH), CC BY 4.0</p>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
