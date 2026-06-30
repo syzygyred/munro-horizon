@@ -94,11 +94,19 @@ export class SensorHub {
   }
 
   _onOrientation(e) {
+    // webkitCompassHeading (and alpha) report the bearing of the device's
+    // physical top edge — fixed to the hardware, not to whichever edge is
+    // currently "up" on screen. Rotate into landscape and that stops being
+    // the direction the screen (and driver) is actually facing. Correcting
+    // by window.orientation (iOS's screen-rotation angle) fixes this; see
+    // chat history for the geometric derivation of the sign.
+    const screenAngle = typeof window.orientation === 'number' ? window.orientation : 0;
+
     let heading = null;
     if (typeof e.webkitCompassHeading === 'number') {
-      heading = e.webkitCompassHeading; // iOS Safari: true heading already, no inversion needed
+      heading = (e.webkitCompassHeading - screenAngle + 360) % 360;
     } else if (e.alpha != null) {
-      heading = (360 - e.alpha) % 360; // alpha is CCW from the device's initial orientation
+      heading = (360 - e.alpha - screenAngle + 360) % 360; // alpha is CCW from the device's initial orientation
     }
     if (heading == null) return;
 
