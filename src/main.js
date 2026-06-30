@@ -2,14 +2,27 @@ import './style.css';
 import { SensorHub } from './sensors.js';
 import { HorizonView } from './render.js';
 import { distanceMetres, bearing, angularHeightDeg, relativeBearing } from './geo.js';
+import { latLonToGrid } from './osgb.js';
+import { TerrainStore, raySkyline, isVisible } from './terrain.js';
 
 // Fallback eye-level when the device gives no altitude (common on iOS Safari
 // without precise/3D location): a typical Highland road elevation.
 const DEFAULT_OBSERVER_HEIGHT_M = 250;
 
-// A9 layby near Dalwhinnie, facing west toward the Ben Alder group —
-// used as the desktop "demo" viewpoint, see plan's verification section.
-const DEMO_LOCATION = { lat: 56.9336, lon: -4.2406, heading: 270, altitude: 380 };
+// Added to the DEM's ground elevation at the observer's own position, once
+// terrain data is loaded — sitting/standing height. GPS altitude is too
+// noisy (often off by 10-50m) to use directly: even a small mismatch from
+// the DEM's own value at that exact spot creates a steep false "obstruction"
+// in the very first ray step, since a tiny height gap over a tiny distance
+// is still a large angle.
+const EYE_HEIGHT_OFFSET_M = 2;
+
+// A82 layby on Rannoch Moor near Black Corries, facing NNE toward the
+// Loch Treig / Ben Alder group — a famously open, unobstructed viewpoint
+// (verified visible-peak count with the terrain ray-caster before adopting
+// it, see the chat history; an earlier guessed Dalwhinnie coordinate
+// turned out to have a real nearer ridge blocking most of that group).
+const DEMO_LOCATION = { lat: 56.6330, lon: -4.8250, heading: 30, altitude: 320 };
 
 const els = {
   canvas: document.getElementById('horizon'),
@@ -31,18 +44,45 @@ const els = {
   infoDistance: document.getElementById('info-distance'),
   infoBearing: document.getElementById('info-bearing'),
   infoNumber: document.getElementById('info-number'),
+  terrainStatus: document.getElementById('terrain-status'),
 };
 
 let munros = [];
 let lastState = null;
 let frozen = false;
+let terrainReady = false;
 
 const hub = new SensorHub();
 const view = new HorizonView(els.canvas, { onSelect: showInfo });
+const terrain = new TerrainStore();
 
 async function loadMunros() {
   const res = await fetch(`${import.meta.env.BASE_URL}data/munros.json`);
   munros = await res.json();
+  // Precompute each Munro's National Grid position once — terrain lookups
+  // and line-of-sight checks need OSGB36 easting/northing, not lat/lon.
+  for (const m of munros) {
+    const { easting, northing } = latLonToGrid(m.lat, m.lon);
+    m.easting = easting;
+    m.northing = northing;
+  }
+}
+
+function loadTerrain() {
+  els.terrainStatus.textContent = 'Loading terrain data (one-time, ~20MB)…';
+  terrain
+    .loadAll((loaded, total) => {
+      els.terrainStatus.textContent = `Loading terrain data… ${loaded}/${total}`;
+    })
+    .then(() => {
+      terrainReady = true;
+      els.terrainStatus.textContent = '';
+      if (!frozen) draw(lastState);
+    })
+    .catch((err) => {
+      els.terrainStatus.textContent = 'Terrain data unavailable — showing schematic peaks.';
+      console.warn('Terrain load failed:', err);
+    });
 }
 
 function computeGeoForPeaks(observer) {
@@ -59,10 +99,13 @@ function computeGeoForPeaks(observer) {
   });
 }
 
+const SKYLINE_RAYS_PER_DEG = 2;
+
 function draw(state) {
   if (!state || state.lat == null) return;
 
   const maxDistanceM = Number(els.rangeRange.value) * 1000;
+  const fovDeg = Number(els.fovRange.value);
   const observer = {
     lat: state.lat,
     lon: state.lon,
@@ -70,11 +113,28 @@ function draw(state) {
     heading: state.heading ?? 0,
   };
 
-  const withGeo = computeGeoForPeaks(observer).filter((p) => p.distanceM <= maxDistanceM);
+  let obsE, obsN;
+  if (terrainReady) {
+    ({ easting: obsE, northing: obsN } = latLonToGrid(observer.lat, observer.lon));
+    const groundHeight = terrain.elevationAt(obsE, obsN);
+    if (groundHeight != null) observer.heightM = groundHeight + EYE_HEIGHT_OFFSET_M;
+  }
 
-  view.setFov(Number(els.fovRange.value));
+  let withGeo = computeGeoForPeaks(observer).filter((p) => p.distanceM <= maxDistanceM);
+  let skyline = null;
+
+  if (terrainReady) {
+    const inFov = withGeo.filter((p) => Math.abs(p.relBearing) <= fovDeg / 2 + 1);
+    withGeo = inFov.filter((p) =>
+      isVisible(obsE, obsN, observer.heightM, p.easting, p.northing, p.heightM, terrain),
+    );
+    const nRays = Math.min(240, Math.max(60, Math.round(fovDeg * SKYLINE_RAYS_PER_DEG)));
+    skyline = raySkyline(obsE, obsN, observer.heightM, observer.heading, fovDeg, nRays, maxDistanceM, terrain);
+  }
+
+  view.setFov(fovDeg);
   view.setMaxDistance(maxDistanceM);
-  view.render(withGeo, observer.heading);
+  view.render(withGeo, observer.heading, skyline);
 
   updateStatusBar(state);
 }
@@ -117,13 +177,37 @@ function enterRunningState() {
   els.hud.hidden = false;
 }
 
+// deviceorientation can fire 30-60x/sec on a real phone, but a full
+// terrain ray-cast costs tens of ms — recomputing on every raw sensor
+// event would peg the CPU while driving. Cap the sensor-driven redraw
+// rate; direct draw() calls from user actions (sliders, freeze toggle,
+// terrain finishing its first load) stay immediate.
+const DRAW_THROTTLE_MS = 120;
+let lastDrawTime = 0;
+let pendingDrawTimeout = null;
+
+function scheduleDraw(state) {
+  const now = performance.now();
+  const elapsed = now - lastDrawTime;
+  if (elapsed >= DRAW_THROTTLE_MS) {
+    lastDrawTime = now;
+    draw(state);
+  } else if (!pendingDrawTimeout) {
+    pendingDrawTimeout = setTimeout(() => {
+      pendingDrawTimeout = null;
+      lastDrawTime = performance.now();
+      draw(lastState);
+    }, DRAW_THROTTLE_MS - elapsed);
+  }
+}
+
 hub.subscribe((state) => {
   lastState = state;
   if (state.lat == null && state.error) {
     updateStatusBar(state);
     return;
   }
-  if (!frozen) draw(state);
+  if (!frozen) scheduleDraw(state);
   else updateStatusBar(state);
 });
 
@@ -153,6 +237,7 @@ els.demoBtn.addEventListener('click', () => {
 });
 
 loadMunros();
+loadTerrain();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

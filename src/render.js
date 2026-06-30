@@ -26,7 +26,9 @@ export class HorizonView {
       // Rotating the phone (e.g. into landscape) resizes the canvas, which
       // clears it — redraw immediately rather than waiting for the next
       // sensor update (which could be a second or more away, or never if frozen).
-      if (this._lastRender) this.render(this._lastRender.peaksWithGeo, this._lastRender.headingDeg);
+      if (this._lastRender) {
+        this.render(this._lastRender.peaksWithGeo, this._lastRender.headingDeg, this._lastRender.skyline);
+      }
     });
     canvas.addEventListener('click', (e) => this._handlePoint(e.clientX, e.clientY));
     canvas.addEventListener('touchend', (e) => {
@@ -71,8 +73,13 @@ export class HorizonView {
   }
 
   // peaksWithGeo: [{ name, heightM, distanceM, bearingDeg, relBearing, elevationDeg, ... }]
-  render(peaksWithGeo, headingDeg) {
-    this._lastRender = { peaksWithGeo, headingDeg };
+  // skyline (optional, Phase 2): [{ azimuthDeg, elevationDeg }, ...] ray-cast terrain
+  // silhouette from src/terrain.js. When present, peaksWithGeo should already be
+  // occlusion-filtered (only genuinely visible Munros) — the real ridgeline is drawn
+  // instead of schematic triangles, with labels/tap-targets placed at each peak's
+  // own angle (which lands on the silhouette, since the peak IS part of the terrain).
+  render(peaksWithGeo, headingDeg, skyline = null) {
+    this._lastRender = { peaksWithGeo, headingDeg, skyline };
     const { ctx, width, height } = this;
     ctx.clearRect(0, 0, width, height);
     this._drawSky(ctx, width, height);
@@ -101,8 +108,14 @@ export class HorizonView {
     });
 
     this._hits = [];
+    if (skyline) {
+      this._drawTerrainSilhouette(ctx, width, baseline, skyline, headingDeg, apexPxPerDegElevation);
+    } else {
+      for (const g of glyphs) {
+        this._drawPeakGlyph(ctx, g.x, baseline, g.apexHeightPx, g.baseWidthPx, g.opacity);
+      }
+    }
     for (const g of glyphs) {
-      this._drawPeakGlyph(ctx, g.x, baseline, g.apexHeightPx, g.baseWidthPx, g.opacity);
       this._hits.push({
         x: g.x,
         y: g.apexY,
@@ -113,6 +126,27 @@ export class HorizonView {
 
     this._drawLabels(ctx, glyphs);
     this._drawCenterMarker(ctx, width, height);
+  }
+
+  _drawTerrainSilhouette(ctx, width, baseline, skyline, headingDeg, apexPxPerDegElevation) {
+    const pixelsPerDegree = width / this.fovDeg;
+    const points = skyline.map((s) => {
+      const rel = ((s.azimuthDeg - headingDeg + 540) % 360) - 180;
+      const x = width / 2 + rel * pixelsPerDegree;
+      const y = baseline - Math.max(0, s.elevationDeg) * apexPxPerDegElevation;
+      return [x, y];
+    });
+
+    ctx.fillStyle = 'rgba(60, 50, 45, 0.85)';
+    ctx.strokeStyle = 'rgba(255, 240, 220, 0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], baseline);
+    for (const [x, y] of points) ctx.lineTo(x, y);
+    ctx.lineTo(points[points.length - 1][0], baseline);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
   }
 
   // Greedily place labels for the most prominent (tallest-on-screen) peaks
