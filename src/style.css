@@ -89,7 +89,9 @@ html, body {
   top: 0;
   left: 0;
   right: 0;
-  padding: env(safe-area-inset-top, 12px) 12px 0;
+  padding-top: env(safe-area-inset-top, 12px);
+  padding-right: max(12px, env(safe-area-inset-right));
+  padding-left: max(12px, env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -149,14 +151,16 @@ html, body {
 
 #info-panel {
   position: absolute;
-  left: 12px;
-  right: 12px;
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
   bottom: env(safe-area-inset-bottom, 12px);
   background: rgba(10, 16, 24, 0.92);
   color: #fff;
   border-radius: 14px;
   padding: 16px;
   backdrop-filter: blur(6px);
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 #info-panel h2 {
@@ -188,12 +192,45 @@ html, body {
 
 #attribution {
   position: absolute;
-  bottom: 2px;
-  left: 0;
-  right: 0;
+  bottom: env(safe-area-inset-bottom, 2px);
+  left: max(0px, env(safe-area-inset-left));
+  right: max(0px, env(safe-area-inset-right));
   text-align: center;
   margin: 0;
   font-size: 9px;
   color: rgba(255, 255, 255, 0.35);
   pointer-events: none;
+}
+
+/* Short viewport (phone in landscape, mounted in a car): tighten the HUD
+   so controls don't eat into the sky area the horizon strip needs. */
+@media (orientation: landscape) and (max-height: 500px) {
+  #hud {
+    gap: 4px;
+  }
+
+  #controls {
+    gap: 10px;
+    padding: 4px 8px;
+  }
+
+  #status-bar {
+    font-size: 11px;
+  }
+
+  #start-screen {
+    gap: 8px;
+  }
+
+  #start-screen h1 {
+    font-size: 22px;
+  }
+
+  #start-screen p {
+    display: none;
+  }
+
+  #info-panel {
+    padding: 10px 16px;
+  }
 }

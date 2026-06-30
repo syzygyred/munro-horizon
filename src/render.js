@@ -2,7 +2,12 @@
 // angular elevation above the horizon ("size = angular height" from the
 // schematic-MVP design — no real terrain silhouette yet, that's Phase 2).
 
-const APEX_PX_PER_DEG_ELEVATION = 26;
+// Fraction of canvas height used per degree of elevation, rather than a
+// fixed pixel constant — keeps glyphs from overrunning the HUD when the
+// viewport is short (phone in landscape, mounted in a car).
+const APEX_PX_PER_DEG_FRACTION = 0.032;
+const APEX_PX_PER_DEG_MIN = 10;
+const APEX_PX_PER_DEG_MAX = 30;
 const MIN_HIT_RADIUS_PX = 18;
 
 export class HorizonView {
@@ -13,9 +18,16 @@ export class HorizonView {
     this.maxDistanceM = maxDistanceM;
     this.onSelect = onSelect;
     this._hits = [];
+    this._lastRender = null;
 
     this._resize();
-    window.addEventListener('resize', () => this._resize());
+    window.addEventListener('resize', () => {
+      this._resize();
+      // Rotating the phone (e.g. into landscape) resizes the canvas, which
+      // clears it — redraw immediately rather than waiting for the next
+      // sensor update (which could be a second or more away, or never if frozen).
+      if (this._lastRender) this.render(this._lastRender.peaksWithGeo, this._lastRender.headingDeg);
+    });
     canvas.addEventListener('click', (e) => this._handlePoint(e.clientX, e.clientY));
     canvas.addEventListener('touchend', (e) => {
       const t = e.changedTouches[0];
@@ -60,6 +72,7 @@ export class HorizonView {
 
   // peaksWithGeo: [{ name, heightM, distanceM, bearingDeg, relBearing, elevationDeg, ... }]
   render(peaksWithGeo, headingDeg) {
+    this._lastRender = { peaksWithGeo, headingDeg };
     const { ctx, width, height } = this;
     ctx.clearRect(0, 0, width, height);
     this._drawSky(ctx, width, height);
@@ -69,6 +82,10 @@ export class HorizonView {
     this._drawCompassTicks(ctx, width, baseline, headingDeg);
 
     const pixelsPerDegree = width / this.fovDeg;
+    const apexPxPerDegElevation = Math.min(
+      APEX_PX_PER_DEG_MAX,
+      Math.max(APEX_PX_PER_DEG_MIN, height * APEX_PX_PER_DEG_FRACTION),
+    );
 
     const visible = peaksWithGeo
       .filter((p) => Math.abs(p.relBearing) <= this.fovDeg / 2 + 1)
@@ -77,7 +94,7 @@ export class HorizonView {
 
     const glyphs = visible.map((p) => {
       const x = width / 2 + p.relBearing * pixelsPerDegree;
-      const apexHeightPx = Math.max(6, p.elevationDeg * APEX_PX_PER_DEG_ELEVATION + 14);
+      const apexHeightPx = Math.max(6, p.elevationDeg * apexPxPerDegElevation + 14);
       const baseWidthPx = Math.min(80, Math.max(14, apexHeightPx * 0.7));
       const opacity = Math.max(0.35, 1 - (p.distanceM / this.maxDistanceM) * 0.65);
       return { peak: p, x, apexY: baseline - apexHeightPx, apexHeightPx, baseWidthPx, opacity };
