@@ -35,26 +35,32 @@ export class SensorHub {
       && typeof DeviceOrientationEvent.requestPermission === 'function';
   }
 
-  // Must be called from inside a user gesture (tap) on iOS.
-  async requestPermissions() {
-    if (SensorHub.needsOrientationPermission()) {
-      const result = await DeviceOrientationEvent.requestPermission();
-      if (result !== 'granted') {
-        throw new Error('Motion & orientation permission was not granted.');
-      }
-    }
+  // Starts the geolocation watch immediately and synchronously (must be
+  // called directly inside a tap handler, before any `await`). iOS Safari
+  // ties the location-permission prompt to the tap's transient user
+  // activation; awaiting something else first (e.g. the motion-permission
+  // prompt) can let that activation expire, causing a silent auto-deny
+  // with no dialog ever shown.
+  start() {
     if (!('geolocation' in navigator)) {
       throw new Error('Geolocation is not supported on this device.');
     }
-  }
-
-  start() {
     this._geoWatchId = navigator.geolocation.watchPosition(
       (pos) => this._onPosition(pos),
       (err) => this._onError(err),
       { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 },
     );
+  }
 
+  // Safe to call after start(), even though it's async — orientation's own
+  // permission prompt is independently tied to its own call, not start()'s.
+  async requestOrientationPermission() {
+    if (SensorHub.needsOrientationPermission()) {
+      const result = await DeviceOrientationEvent.requestPermission();
+      if (result !== 'granted') {
+        throw new Error('Motion & orientation permission was not granted — compass heading will be unavailable.');
+      }
+    }
     this._orientationHandler = (e) => this._onOrientation(e);
     window.addEventListener('deviceorientationabsolute', this._orientationHandler, true);
     window.addEventListener('deviceorientation', this._orientationHandler, true);
@@ -105,7 +111,12 @@ export class SensorHub {
   }
 
   _onError(err) {
-    this.state.error = err.message || 'Location error';
+    const friendly = {
+      1: 'Location permission denied. On iPhone: Settings → Privacy & Security → Location Services → Safari Websites → While Using.',
+      2: 'Location unavailable — check GPS signal.',
+      3: 'Location request timed out — retrying…',
+    };
+    this.state.error = friendly[err.code] || err.message || 'Location error';
     this._emit();
   }
 

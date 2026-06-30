@@ -41,7 +41,7 @@ const hub = new SensorHub();
 const view = new HorizonView(els.canvas, { onSelect: showInfo });
 
 async function loadMunros() {
-  const res = await fetch('/data/munros.json');
+  const res = await fetch(`${import.meta.env.BASE_URL}data/munros.json`);
   munros = await res.json();
 }
 
@@ -127,16 +127,24 @@ hub.subscribe((state) => {
   else updateStatusBar(state);
 });
 
-els.startBtn.addEventListener('click', async () => {
+els.startBtn.addEventListener('click', () => {
   els.startError.hidden = true;
   try {
-    await hub.requestPermissions();
+    // Must happen synchronously inside this handler — see the comment on
+    // SensorHub.start() for why awaiting anything first breaks iOS Safari.
     hub.start();
-    enterRunningState();
   } catch (err) {
     els.startError.textContent = err.message;
     els.startError.hidden = false;
+    return;
   }
+  enterRunningState();
+  // Orientation permission has its own tap-bound prompt; requesting it
+  // after start() is fine, and a denial here is non-fatal (GPS course
+  // still gives a heading once driving).
+  hub.requestOrientationPermission().catch((err) => {
+    console.warn(err.message);
+  });
 });
 
 els.demoBtn.addEventListener('click', () => {
@@ -148,6 +156,6 @@ loadMunros();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {});
   });
 }
